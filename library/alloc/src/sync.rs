@@ -693,10 +693,9 @@ impl<T, A: Allocator> Arc<T, A> {
     ///
     /// let five = Arc::new_in(5, System);
     /// ```
+    #[inline]
     #[cfg(not(no_global_oom_handling))]
-    #[inline]
     #[unstable(feature = "allocator_api", issue = "32838")]
-    #[inline]
     pub fn new_in(data: T, alloc: A) -> Arc<T, A> {
         // Start the weak pointer count as 1 which is the weak pointer that's
         // held by all the strong pointers (kinda), see std/rc.rs for more info
@@ -745,7 +744,7 @@ impl<T, A: Allocator> Arc<T, A> {
                 Arc::allocate_for_layout(
                     Layout::new::<T>(),
                     |layout| alloc.allocate(layout),
-                    |mem| mem as *mut ArcInner<mem::MaybeUninit<T>>,
+                    <*mut u8>::cast,
                 ),
                 alloc,
             )
@@ -784,7 +783,7 @@ impl<T, A: Allocator> Arc<T, A> {
                 Arc::allocate_for_layout(
                     Layout::new::<T>(),
                     |layout| alloc.allocate_zeroed(layout),
-                    |mem| mem as *mut ArcInner<mem::MaybeUninit<T>>,
+                    <*mut u8>::cast,
                 ),
                 alloc,
             )
@@ -804,7 +803,6 @@ impl<T, A: Allocator> Arc<T, A> {
     /// fails.
     #[inline]
     #[unstable(feature = "allocator_api", issue = "32838")]
-    #[inline]
     pub fn try_pin_in(data: T, alloc: A) -> Result<Pin<Arc<T, A>>, AllocError> {
         unsafe { Ok(Pin::new_unchecked(Arc::try_new_in(data, alloc)?)) }
     }
@@ -873,7 +871,7 @@ impl<T, A: Allocator> Arc<T, A> {
                 Arc::try_allocate_for_layout(
                     Layout::new::<T>(),
                     |layout| alloc.allocate(layout),
-                    |mem| mem as *mut ArcInner<mem::MaybeUninit<T>>,
+                    <*mut u8>::cast,
                 )?,
                 alloc,
             ))
@@ -912,7 +910,7 @@ impl<T, A: Allocator> Arc<T, A> {
                 Arc::try_allocate_for_layout(
                     Layout::new::<T>(),
                     |layout| alloc.allocate_zeroed(layout),
-                    |mem| mem as *mut ArcInner<mem::MaybeUninit<T>>,
+                    <*mut u8>::cast,
                 )?,
                 alloc,
             ))
@@ -1224,7 +1222,7 @@ impl<T, A: Allocator> Arc<[T], A> {
                     Layout::array::<T>(len).unwrap(),
                     |layout| alloc.allocate_zeroed(layout),
                     |mem| {
-                        ptr::slice_from_raw_parts_mut(mem as *mut T, len)
+                        ptr::slice_from_raw_parts_mut(mem.cast::<T>(), len)
                             as *mut ArcInner<[mem::MaybeUninit<T>]>
                     },
                 ),
@@ -1955,7 +1953,7 @@ impl<T, A: Allocator> Arc<[T], A> {
             Arc::allocate_for_layout(
                 Layout::array::<T>(len).unwrap(),
                 |layout| alloc.allocate(layout),
-                |mem| ptr::slice_from_raw_parts_mut(mem as *mut T, len) as *mut ArcInner<[T]>,
+                |mem| ptr::slice_from_raw_parts_mut(mem.cast::<T>(), len) as *mut ArcInner<[T]>,
             )
         }
     }
@@ -2524,6 +2522,7 @@ impl<T, A: Allocator> Weak<T, A> {
     /// let empty: Weak<i64, _> = Weak::new_in(System);
     /// assert!(empty.upgrade().is_none());
     /// ```
+    #[inline]
     #[unstable(feature = "allocator_api", issue = "32838")]
     pub fn new_in(alloc: A) -> Weak<T, A> {
         Weak {
@@ -2761,27 +2760,31 @@ impl<T: ?Sized, A: Allocator> Weak<T, A> {
     where
         A: Clone,
     {
+        #[inline]
+        fn checked_increment(n: usize) -> Option<usize> {
+            // Any write of 0 we can observe leaves the field in permanently zero state.
+            if n == 0 {
+                return None;
+            }
+            // See comments in `Arc::clone` for why we do this (for `mem::forget`).
+            assert!(n <= MAX_REFCOUNT, "{}", INTERNAL_OVERFLOW_ERROR);
+            Some(n + 1)
+        }
+
         // We use a CAS loop to increment the strong count instead of a
         // fetch_add as this function should never take the reference count
         // from zero to one.
-        self.inner()?
-            .strong
-            // Relaxed is fine for the failure case because we don't have any expectations about the new state.
-            // Acquire is necessary for the success case to synchronise with `Arc::new_cyclic`, when the inner
-            // value can be initialized after `Weak` references have already been created. In that case, we
-            // expect to observe the fully initialized value.
-            .fetch_update(Acquire, Relaxed, |n| {
-                // Any write of 0 we can observe leaves the field in permanently zero state.
-                if n == 0 {
-                    return None;
-                }
-                // See comments in `Arc::clone` for why we do this (for `mem::forget`).
-                assert!(n <= MAX_REFCOUNT, "{}", INTERNAL_OVERFLOW_ERROR);
-                Some(n + 1)
-            })
-            .ok()
-            // null checked above
-            .map(|_| unsafe { Arc::from_inner_in(self.ptr, self.alloc.clone()) })
+        //
+        // Relaxed is fine for the failure case because we don't have any expectations about the new state.
+        // Acquire is necessary for the success case to synchronise with `Arc::new_cyclic`, when the inner
+        // value can be initialized after `Weak` references have already been created. In that case, we
+        // expect to observe the fully initialized value.
+        if self.inner()?.strong.fetch_update(Acquire, Relaxed, checked_increment).is_ok() {
+            // SAFETY: pointer is not null, verified in checked_increment
+            unsafe { Some(Arc::from_inner_in(self.ptr, self.alloc.clone())) }
+        } else {
+            None
+        }
     }
 
     /// Gets the number of strong (`Arc`) pointers pointing to this allocation.

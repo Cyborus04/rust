@@ -720,7 +720,7 @@ impl<T, A: Allocator> Rc<T, A> {
                 Rc::allocate_for_layout(
                     Layout::new::<T>(),
                     |layout| alloc.allocate(layout),
-                    |mem| mem as *mut RcBox<mem::MaybeUninit<T>>,
+                    <*mut u8>::cast,
                 ),
                 alloc,
             )
@@ -759,7 +759,7 @@ impl<T, A: Allocator> Rc<T, A> {
                 Rc::allocate_for_layout(
                     Layout::new::<T>(),
                     |layout| alloc.allocate_zeroed(layout),
-                    |mem| mem as *mut RcBox<mem::MaybeUninit<T>>,
+                    <*mut u8>::cast,
                 ),
                 alloc,
             )
@@ -826,7 +826,7 @@ impl<T, A: Allocator> Rc<T, A> {
                 Rc::try_allocate_for_layout(
                     Layout::new::<T>(),
                     |layout| alloc.allocate(layout),
-                    |mem| mem as *mut RcBox<mem::MaybeUninit<T>>,
+                    <*mut u8>::cast,
                 )?,
                 alloc,
             ))
@@ -865,7 +865,7 @@ impl<T, A: Allocator> Rc<T, A> {
                 Rc::try_allocate_for_layout(
                     Layout::new::<T>(),
                     |layout| alloc.allocate_zeroed(layout),
-                    |mem| mem as *mut RcBox<mem::MaybeUninit<T>>,
+                    <*mut u8>::cast,
                 )?,
                 alloc,
             ))
@@ -1075,7 +1075,7 @@ impl<T, A: Allocator> Rc<[T], A> {
                     Layout::array::<T>(len).unwrap(),
                     |layout| alloc.allocate_zeroed(layout),
                     |mem| {
-                        ptr::slice_from_raw_parts_mut(mem as *mut T, len)
+                        ptr::slice_from_raw_parts_mut(mem.cast::<T>(), len)
                             as *mut RcBox<[mem::MaybeUninit<T>]>
                     },
                 ),
@@ -2010,7 +2010,7 @@ impl<T, A: Allocator> Rc<[T], A> {
             Rc::<[T]>::allocate_for_layout(
                 Layout::array::<T>(len).unwrap(),
                 |layout| alloc.allocate(layout),
-                |mem| ptr::slice_from_raw_parts_mut(mem as *mut T, len) as *mut RcBox<[T]>,
+                |mem| ptr::slice_from_raw_parts_mut(mem.cast::<T>(), len) as *mut RcBox<[T]>,
             )
         }
     }

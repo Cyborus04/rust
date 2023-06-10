@@ -528,7 +528,7 @@ impl<T> Arc<T> {
             Arc::from_ptr(Arc::allocate_for_layout(
                 Layout::new::<T>(),
                 |layout| Global.allocate(layout),
-                |mem| mem as *mut ArcInner<mem::MaybeUninit<T>>,
+                <*mut u8>::cast,
             ))
         }
     }
@@ -562,7 +562,7 @@ impl<T> Arc<T> {
             Arc::from_ptr(Arc::allocate_for_layout(
                 Layout::new::<T>(),
                 |layout| Global.allocate_zeroed(layout),
-                |mem| mem as *mut ArcInner<mem::MaybeUninit<T>>,
+                <*mut u8>::cast,
             ))
         }
     }
@@ -635,7 +635,7 @@ impl<T> Arc<T> {
             Ok(Arc::from_ptr(Arc::try_allocate_for_layout(
                 Layout::new::<T>(),
                 |layout| Global.allocate(layout),
-                |mem| mem as *mut ArcInner<mem::MaybeUninit<T>>,
+                <*mut u8>::cast,
             )?))
         }
     }
@@ -668,7 +668,7 @@ impl<T> Arc<T> {
             Ok(Arc::from_ptr(Arc::try_allocate_for_layout(
                 Layout::new::<T>(),
                 |layout| Global.allocate_zeroed(layout),
-                |mem| mem as *mut ArcInner<mem::MaybeUninit<T>>,
+                <*mut u8>::cast,
             )?))
         }
     }
@@ -1876,7 +1876,7 @@ impl<T> Arc<[T]> {
             Self::allocate_for_layout(
                 Layout::array::<T>(len).unwrap(),
                 |layout| Global.allocate(layout),
-                |mem| ptr::slice_from_raw_parts_mut(mem as *mut T, len) as *mut ArcInner<[T]>,
+                |mem| ptr::slice_from_raw_parts_mut(mem.cast::<T>(), len) as *mut ArcInner<[T]>,
             )
         }
     }
@@ -2810,22 +2810,22 @@ impl<T: ?Sized, A: Allocator> Weak<T, A> {
     #[must_use]
     #[stable(feature = "weak_counts", since = "1.41.0")]
     pub fn weak_count(&self) -> usize {
-        self.inner()
-            .map(|inner| {
-                let weak = inner.weak.load(Acquire);
-                let strong = inner.strong.load(Acquire);
-                if strong == 0 {
-                    0
-                } else {
-                    // Since we observed that there was at least one strong pointer
-                    // after reading the weak count, we know that the implicit weak
-                    // reference (present whenever any strong references are alive)
-                    // was still around when we observed the weak count, and can
-                    // therefore safely subtract it.
-                    weak - 1
-                }
-            })
-            .unwrap_or(0)
+        if let Some(inner) = self.inner() {
+            let weak = inner.weak.load(Acquire);
+            let strong = inner.strong.load(Acquire);
+            if strong == 0 {
+                0
+            } else {
+                // Since we observed that there was at least one strong pointer
+                // after reading the weak count, we know that the implicit weak
+                // reference (present whenever any strong references are alive)
+                // was still around when we observed the weak count, and can
+                // therefore safely subtract it.
+                weak - 1
+            }
+        } else {
+            0
+        }
     }
 
     /// Returns `None` when the pointer is dangling and there is no allocated `ArcInner`,

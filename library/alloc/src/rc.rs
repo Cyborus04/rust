@@ -520,7 +520,7 @@ impl<T> Rc<T> {
             Rc::from_ptr(Rc::allocate_for_layout(
                 Layout::new::<T>(),
                 |layout| Global.allocate(layout),
-                |mem| mem as *mut RcBox<mem::MaybeUninit<T>>,
+                <*mut u8>::cast,
             ))
         }
     }
@@ -553,7 +553,7 @@ impl<T> Rc<T> {
             Rc::from_ptr(Rc::allocate_for_layout(
                 Layout::new::<T>(),
                 |layout| Global.allocate_zeroed(layout),
-                |mem| mem as *mut RcBox<mem::MaybeUninit<T>>,
+                <*mut u8>::cast,
             ))
         }
     }
@@ -610,7 +610,7 @@ impl<T> Rc<T> {
             Ok(Rc::from_ptr(Rc::try_allocate_for_layout(
                 Layout::new::<T>(),
                 |layout| Global.allocate(layout),
-                |mem| mem as *mut RcBox<mem::MaybeUninit<T>>,
+                <*mut u8>::cast,
             )?))
         }
     }
@@ -643,7 +643,7 @@ impl<T> Rc<T> {
             Ok(Rc::from_ptr(Rc::try_allocate_for_layout(
                 Layout::new::<T>(),
                 |layout| Global.allocate_zeroed(layout),
-                |mem| mem as *mut RcBox<mem::MaybeUninit<T>>,
+                <*mut u8>::cast,
             )?))
         }
     }
@@ -1000,7 +1000,7 @@ impl<T> Rc<[T]> {
                 Layout::array::<T>(len).unwrap(),
                 |layout| Global.allocate_zeroed(layout),
                 |mem| {
-                    ptr::slice_from_raw_parts_mut(mem as *mut T, len)
+                    ptr::slice_from_raw_parts_mut(mem.cast::<T>(), len)
                         as *mut RcBox<[mem::MaybeUninit<T>]>
                 },
             ))
@@ -1935,7 +1935,7 @@ impl<T> Rc<[T]> {
             Self::allocate_for_layout(
                 Layout::array::<T>(len).unwrap(),
                 |layout| Global.allocate(layout),
-                |mem| ptr::slice_from_raw_parts_mut(mem as *mut T, len) as *mut RcBox<[T]>,
+                |mem| ptr::slice_from_raw_parts_mut(mem.cast::<T>(), len) as *mut RcBox<[T]>,
             )
         }
     }
@@ -2749,7 +2749,7 @@ impl<T, A: Allocator> Weak<T, A> {
 }
 
 pub(crate) fn is_dangling<T: ?Sized>(ptr: *mut T) -> bool {
-    (ptr as *mut ()).addr() == usize::MAX
+    (ptr.cast::<()>()).addr() == usize::MAX
 }
 
 /// Helper type to allow accessing the reference counts without
@@ -3044,15 +3044,15 @@ impl<T: ?Sized, A: Allocator> Weak<T, A> {
     #[must_use]
     #[stable(feature = "weak_counts", since = "1.41.0")]
     pub fn weak_count(&self) -> usize {
-        self.inner()
-            .map(|inner| {
-                if inner.strong() > 0 {
-                    inner.weak() - 1 // subtract the implicit weak ptr
-                } else {
-                    0
-                }
-            })
-            .unwrap_or(0)
+        if let Some(inner) = self.inner() {
+            if inner.strong() > 0 {
+                inner.weak() - 1 // subtract the implicit weak ptr
+            } else {
+                0
+            }
+        } else {
+            0
+        }
     }
 
     /// Returns `None` when the pointer is dangling and there is no allocated `RcBox`,
